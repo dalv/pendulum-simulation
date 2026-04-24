@@ -12,12 +12,16 @@ const BAR_TOP = 60;
 const BAR_BOTTOM = CANVAS_HEIGHT - 60;
 const ANCHOR_MIN_Y = BAR_TOP + 8;
 const ANCHOR_MAX_Y = BAR_BOTTOM - 8;
-const ANCHOR_INIT_Y = CANVAS_HEIGHT / 2;
+// Start the anchor 25% down from the top of the bar (i.e. 75% up from the bottom).
+const ANCHOR_INIT_Y = BAR_TOP + 0.25 * (BAR_BOTTOM - BAR_TOP);
 const ANCHOR_RADIUS = 12;
 const WEIGHT_RADIUS = 16;
 const MAX_ANCHOR_SPEED = 1800;
 const VX_THRESHOLD = 80;
 const DAMPING_PER_STEP = 0.9998;
+const COUNTDOWN_DURATION_S = 3;
+const CHARGE_HEIGHT_M = 0.3;
+const CHARGE_PX = CHARGE_HEIGHT_M * PX_PER_METER;
 
 type Phase = "idle" | "countdown" | "swinging" | "done";
 
@@ -44,6 +48,7 @@ interface SimState {
   hasBeenLeft: boolean;
   leftTopPos: Vec2 | null;
   leftPeakHeightM: number | null;
+  countdownElapsedS: number;
 }
 
 function makeInitialSim(): SimState {
@@ -65,7 +70,13 @@ function makeInitialSim(): SimState {
     hasBeenLeft: false,
     leftTopPos: null,
     leftPeakHeightM: null,
+    countdownElapsedS: 0,
   };
+}
+
+function smootherstep(t: number): number {
+  const x = t < 0 ? 0 : t > 1 ? 1 : t;
+  return x * x * x * (x * (x * 6 - 15) + 10);
 }
 
 export default function PendulumSimulator() {
@@ -108,6 +119,7 @@ export default function PendulumSimulator() {
     reset();
     setPhase("countdown");
     simRef.current.phase = "countdown";
+    simRef.current.countdownElapsedS = 0;
     setCountdown(3);
     timersRef.current.push(window.setTimeout(() => setCountdown(2), 1000));
     timersRef.current.push(window.setTimeout(() => setCountdown(1), 2000));
@@ -115,10 +127,12 @@ export default function PendulumSimulator() {
       window.setTimeout(() => {
         setCountdown(0);
         const s = simRef.current;
+        // Reference line = horizontal release position (anchor's y). The charge
+        // raises the weight above that line, so initial height is CHARGE_HEIGHT_M.
+        s.referenceY = s.anchor.y;
         s.phase = "swinging";
-        s.referenceY = s.weight.y;
         setPhase("swinging");
-      }, 3000)
+      }, COUNTDOWN_DURATION_S * 1000)
     );
   }, [reset]);
 
@@ -176,7 +190,29 @@ export default function PendulumSimulator() {
       s.anchor.y = clamp(s.anchor.y, ANCHOR_MIN_Y, ANCHOR_MAX_Y);
     }
 
-    if (s.phase === "swinging") {
+    if (s.phase === "idle") {
+      // At rest — weight pinned horizontally to the right of the anchor.
+      s.weight.x = s.anchor.x + STRING_LENGTH;
+      s.weight.y = s.anchor.y;
+      s.weightVel.x = 0;
+      s.weightVel.y = 0;
+      s.referenceY = s.anchor.y;
+    } else if (s.phase === "countdown") {
+      // "Charge up": raise the weight along the string arc by CHARGE_PX over
+      // the countdown, using an ease-in-out (smootherstep) S-curve.
+      s.countdownElapsedS = Math.min(
+        s.countdownElapsedS + dt,
+        COUNTDOWN_DURATION_S
+      );
+      const t = s.countdownElapsedS / COUNTDOWN_DURATION_S;
+      const h = CHARGE_PX * smootherstep(t);
+      const horiz = Math.sqrt(Math.max(0, STRING_LENGTH * STRING_LENGTH - h * h));
+      s.weight.x = s.anchor.x + horiz;
+      s.weight.y = s.anchor.y - h;
+      s.weightVel.x = 0;
+      s.weightVel.y = 0;
+      s.referenceY = s.anchor.y;
+    } else if (s.phase === "swinging") {
       // Integrate gravity
       s.weightVel.y += GRAVITY * dt;
       let px = s.weight.x + s.weightVel.x * dt;
@@ -202,15 +238,9 @@ export default function PendulumSimulator() {
       s.weightVel.x *= DAMPING_PER_STEP;
       s.weightVel.y *= DAMPING_PER_STEP;
 
-      // Height tracking
-      const heightPx = s.referenceY - s.weight.y;
-      s.currentHeightM = heightPx / PX_PER_METER;
-      if (s.currentHeightM > s.maxHeightM) s.maxHeightM = s.currentHeightM;
-
       // Left-side peak = highest point (min y) reached while the weight is on
-      // the left of the anchor. This is what "max height on the left" means
-      // and it's what the user wants marked; tracking leftmost-x alone misses
-      // peaks created by pumping the anchor upward.
+      // the left of the anchor. Tracking leftmost-x alone misses peaks
+      // created by pumping the anchor upward.
       if (s.weight.x < s.anchor.x) {
         s.hasBeenLeft = true;
         if (s.leftTopPos === null || s.weight.y < s.leftTopPos.y) {
@@ -233,15 +263,16 @@ export default function PendulumSimulator() {
         s.path.push({ x: s.weight.x, y: s.weight.y });
         if (s.path.length > 6000) s.path.shift();
       }
-    } else {
-      // Keep weight pinned to the right of anchor while idle / countdown / done
-      if (s.phase !== "done") {
-        s.weight.x = s.anchor.x + STRING_LENGTH;
-        s.weight.y = s.anchor.y;
-        s.weightVel.x = 0;
-        s.weightVel.y = 0;
-        s.referenceY = s.anchor.y;
-      }
+    }
+    // phase === "done": leave weight and velocity untouched — frozen where it ended.
+
+    // Height is meaningful in every phase (including the charge-up animation).
+    s.currentHeightM = (s.referenceY - s.weight.y) / PX_PER_METER;
+    if (
+      (s.phase === "countdown" || s.phase === "swinging") &&
+      s.currentHeightM > s.maxHeightM
+    ) {
+      s.maxHeightM = s.currentHeightM;
     }
   }
 
