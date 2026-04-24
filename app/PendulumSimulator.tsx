@@ -8,12 +8,20 @@ const PX_PER_METER = 150;
 const GRAVITY = 9.81 * PX_PER_METER;
 const STRING_LENGTH = 200;
 const BAR_X = 350;
-const BAR_TOP = 60;
-const BAR_BOTTOM = CANVAS_HEIGHT - 60;
-const ANCHOR_MIN_Y = BAR_TOP + 8;
-const ANCHOR_MAX_Y = BAR_BOTTOM - 8;
-// Start the anchor 25% down from the top of the bar (i.e. 75% up from the bottom).
-const ANCHOR_INIT_Y = BAR_TOP + 0.25 * (BAR_BOTTOM - BAR_TOP);
+
+// Anchor movement bounds — apply to BOTH manual drag and trajectory playback.
+const ANCHOR_UP_M = 0.2;
+const ANCHOR_DOWN_M = 0.5;
+const ANCHOR_UP_PX = ANCHOR_UP_M * PX_PER_METER;
+const ANCHOR_DOWN_PX = ANCHOR_DOWN_M * PX_PER_METER;
+const ANCHOR_HOME_Y = 200;
+const ANCHOR_MIN_Y = ANCHOR_HOME_Y - ANCHOR_UP_PX;
+const ANCHOR_MAX_Y = ANCHOR_HOME_Y + ANCHOR_DOWN_PX;
+// Blue bar is sized to the anchor's movable window (plus a small visual margin).
+const BAR_TOP = ANCHOR_MIN_Y - 14;
+const BAR_BOTTOM = ANCHOR_MAX_Y + 14;
+const ANCHOR_INIT_Y = ANCHOR_HOME_Y;
+
 const ANCHOR_RADIUS = 12;
 const WEIGHT_RADIUS = 16;
 const MAX_ANCHOR_SPEED = 1800;
@@ -22,11 +30,30 @@ const COUNTDOWN_DURATION_S = 3;
 const CHARGE_HEIGHT_M = 0.3;
 const CHARGE_PX = CHARGE_HEIGHT_M * PX_PER_METER;
 
+// Anchor-trajectory timeline.
+const TRAJECTORY_DURATION_S = 2.0;
+const TIMELINE_W = 800;
+const TIMELINE_H = 110;
+const TIMELINE_PAD = 14;
+const TIMELINE_BOTTOM_LABEL_H = 14;
+const TIMELINE_INNER_W = TIMELINE_W - 2 * TIMELINE_PAD;
+const TIMELINE_INNER_H = TIMELINE_H - 2 * TIMELINE_PAD - TIMELINE_BOTTOM_LABEL_H;
+const TIMELINE_INNER_TOP = TIMELINE_PAD;
+const TIMELINE_HOME_Y =
+  TIMELINE_INNER_TOP +
+  (ANCHOR_UP_PX / (ANCHOR_UP_PX + ANCHOR_DOWN_PX)) * TIMELINE_INNER_H;
+
 type Phase = "idle" | "countdown" | "swinging" | "done";
 
 interface Vec2 {
   x: number;
   y: number;
+}
+
+interface TrajPoint {
+  id: number;
+  t: number; // 0..1 along TRAJECTORY_DURATION_S
+  offset: number; // pixels from ANCHOR_HOME_Y, negative = up, positive = down
 }
 
 interface SimState {
@@ -48,6 +75,10 @@ interface SimState {
   leftTopPos: Vec2 | null;
   leftPeakHeightM: number | null;
   countdownElapsedS: number;
+  swingElapsedS: number;
+  minWeightX: number;
+  reachedLeftPeak: boolean;
+  userTookOverAnchor: boolean;
 }
 
 function makeInitialSim(): SimState {
@@ -70,7 +101,37 @@ function makeInitialSim(): SimState {
     leftTopPos: null,
     leftPeakHeightM: null,
     countdownElapsedS: 0,
+    swingElapsedS: 0,
+    minWeightX: Infinity,
+    reachedLeftPeak: false,
+    userTookOverAnchor: false,
   };
+}
+
+function defaultTrajectory(): TrajPoint[] {
+  return [
+    { id: 1, t: 0, offset: 0 },
+    { id: 2, t: 1, offset: 0 },
+  ];
+}
+
+function sampleTrajectory(points: TrajPoint[], t: number): number {
+  if (points.length === 0) return 0;
+  const ct = t < 0 ? 0 : t > 1 ? 1 : t;
+  if (ct <= points[0].t) return points[0].offset;
+  const last = points[points.length - 1];
+  if (ct >= last.t) return last.offset;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (a.t <= ct && ct <= b.t) {
+      const span = b.t - a.t;
+      if (span <= 0) return b.offset;
+      const u = (ct - a.t) / span;
+      return a.offset + u * (b.offset - a.offset);
+    }
+  }
+  return last.offset;
 }
 
 function smootherstep(t: number): number {
@@ -90,6 +151,12 @@ export default function PendulumSimulator() {
   const [maxHeight, setMaxHeight] = useState<number>(0);
   const [leftPeakHeight, setLeftPeakHeight] = useState<number | null>(null);
   const [pastRuns, setPastRuns] = useState<number[]>([]);
+  const [trajectory, setTrajectory] = useState<TrajPoint[]>(defaultTrajectory);
+  const [playheadT, setPlayheadT] = useState<number | null>(null);
+  const trajectoryRef = useRef<TrajPoint[]>(trajectory);
+  useEffect(() => {
+    trajectoryRef.current = trajectory;
+  }, [trajectory]);
 
   const clearTimers = () => {
     timersRef.current.forEach((id) => window.clearTimeout(id));
@@ -98,20 +165,16 @@ export default function PendulumSimulator() {
 
   const reset = useCallback(() => {
     clearTimers();
-    const prevAnchor = simRef.current.anchor;
+    // Reset the anchor back to its home position on every Reset, so the
+    // trajectory plays from a known starting point on the next run.
     const fresh = makeInitialSim();
-    // Keep anchor where the user last placed it, per the spec:
-    // "the red weight resets to being directly to the right of the black anchor point".
-    fresh.anchor = { x: BAR_X, y: prevAnchor.y };
-    fresh.anchorTargetY = prevAnchor.y;
-    fresh.weight = { x: BAR_X + STRING_LENGTH, y: prevAnchor.y };
-    fresh.referenceY = prevAnchor.y;
     simRef.current = fresh;
     setPhase("idle");
     setCountdown(0);
     setCurrentHeight(0);
     setMaxHeight(0);
     setLeftPeakHeight(null);
+    setPlayheadT(null);
   }, []);
 
   const go = useCallback(() => {
@@ -156,6 +219,17 @@ export default function PendulumSimulator() {
         setCurrentHeight(s.currentHeightM);
         setMaxHeight(s.maxHeightM);
         if (s.leftPeakHeightM !== null) setLeftPeakHeight(s.leftPeakHeightM);
+        if (s.phase === "idle" || s.phase === "countdown") {
+          setPlayheadT(null);
+        } else if (
+          s.phase === "swinging" &&
+          !s.userTookOverAnchor &&
+          !s.reachedLeftPeak
+        ) {
+          setPlayheadT(Math.min(s.swingElapsedS / TRAJECTORY_DURATION_S, 1));
+        }
+        // Past-peak, user-takeover, and "done" phases leave the playhead
+        // where it was — the UI holds its last position.
         if (s.phase !== lastSyncedPhase) {
           if (s.phase === "done" && lastSyncedPhase === "swinging") {
             setPhase("done");
@@ -212,6 +286,21 @@ export default function PendulumSimulator() {
       s.weightVel.y = 0;
       s.referenceY = s.anchor.y;
     } else if (s.phase === "swinging") {
+      // Drive anchor from the pre-defined trajectory while we're on the
+      // right→left leg of the swing. Once the weight passes the left peak, or
+      // the user manually grabs the anchor, trajectory playback stops — the
+      // anchor just holds at wherever it was last driven to.
+      s.swingElapsedS += dt;
+      if (!s.userTookOverAnchor && !s.reachedLeftPeak) {
+        const tNorm = Math.min(s.swingElapsedS / TRAJECTORY_DURATION_S, 1);
+        const offset = sampleTrajectory(trajectoryRef.current, tNorm);
+        s.anchorTargetY = clamp(
+          ANCHOR_HOME_Y + offset,
+          ANCHOR_MIN_Y,
+          ANCHOR_MAX_Y
+        );
+      }
+
       // Integrate gravity
       s.weightVel.y += GRAVITY * dt;
       let px = s.weight.x + s.weightVel.x * dt;
@@ -245,6 +334,17 @@ export default function PendulumSimulator() {
         if (s.leftTopPos === null || s.weight.y < s.leftTopPos.y) {
           s.leftTopPos = { x: s.weight.x, y: s.weight.y };
           s.leftPeakHeightM = (s.referenceY - s.weight.y) / PX_PER_METER;
+        }
+      }
+
+      // Detect the "left peak" moment (weight.x has stopped decreasing
+      // after the weight has been on the left). This is when trajectory
+      // playback must stop — the anchor no longer follows the pre-set
+      // shape on the return leg.
+      if (s.hasBeenLeft) {
+        if (s.weight.x < s.minWeightX) s.minWeightX = s.weight.x;
+        if (!s.reachedLeftPeak && s.weight.x > s.minWeightX + 3) {
+          s.reachedLeftPeak = true;
         }
       }
 
@@ -308,13 +408,22 @@ export default function PendulumSimulator() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Blue vertical bar
+    // Blue vertical bar (sized to the anchor's movable window)
     ctx.strokeStyle = "#2563eb";
     ctx.lineWidth = 10;
     ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(BAR_X, BAR_TOP);
     ctx.lineTo(BAR_X, BAR_BOTTOM);
+    ctx.stroke();
+    // Thin tick marks on either side of the bar at the exact movable limits.
+    ctx.strokeStyle = "#93c5fd";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(BAR_X - 14, ANCHOR_MIN_Y);
+    ctx.lineTo(BAR_X + 14, ANCHOR_MIN_Y);
+    ctx.moveTo(BAR_X - 14, ANCHOR_MAX_Y);
+    ctx.lineTo(BAR_X + 14, ANCHOR_MAX_Y);
     ctx.stroke();
 
     // Recorded path
@@ -426,6 +535,8 @@ export default function PendulumSimulator() {
       if (!onAnchor && onBar) {
         s.anchorTargetY = clamp(y, ANCHOR_MIN_Y, ANCHOR_MAX_Y);
       }
+      // Any grab during the swing disables trajectory playback for this run.
+      if (s.phase === "swinging") s.userTookOverAnchor = true;
       e.currentTarget.setPointerCapture(e.pointerId);
     }
   }, []);
@@ -464,7 +575,7 @@ export default function PendulumSimulator() {
           <span className="text-4xl font-bold tabular-nums text-neutral-800 ml-2">{countdown}</span>
         )}
         <span className="ml-auto text-xs text-neutral-500">
-          Tip: drag the black anchor along the blue bar while swinging.
+          Tip: shape the anchor&apos;s path on the timeline below, or drag the anchor during the swing.
         </span>
       </div>
 
@@ -477,6 +588,13 @@ export default function PendulumSimulator() {
         />
         <Stat label="Status" value={prettyPhase(phase)} />
       </div>
+
+      <AnchorTimeline
+        traj={trajectory}
+        onChange={setTrajectory}
+        playT={playheadT}
+        disabled={phase === "swinging" || phase === "countdown"}
+      />
 
       <div
         className="relative border border-neutral-300 rounded-lg overflow-hidden bg-white touch-none select-none"
@@ -537,4 +655,223 @@ function prettyPhase(p: Phase): string {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function AnchorTimeline({
+  traj,
+  onChange,
+  playT,
+  disabled,
+}: {
+  traj: TrajPoint[];
+  onChange: (next: TrajPoint[]) => void;
+  playT: number | null;
+  disabled: boolean;
+}) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{ id: number; isEndpoint: boolean } | null>(null);
+  const nextIdRef = useRef<number>(
+    Math.max(0, ...traj.map((p) => p.id)) + 1
+  );
+
+  const totalRangePx = ANCHOR_UP_PX + ANCHOR_DOWN_PX;
+
+  const tToX = (t: number) =>
+    TIMELINE_PAD + clamp(t, 0, 1) * TIMELINE_INNER_W;
+  const offsetToY = (o: number) =>
+    TIMELINE_INNER_TOP +
+    ((clamp(o, -ANCHOR_UP_PX, ANCHOR_DOWN_PX) + ANCHOR_UP_PX) / totalRangePx) *
+      TIMELINE_INNER_H;
+  const xToT = (x: number) =>
+    clamp((x - TIMELINE_PAD) / TIMELINE_INNER_W, 0, 1);
+  const yToOffset = (y: number) =>
+    clamp(
+      ((y - TIMELINE_INNER_TOP) / TIMELINE_INNER_H) * totalRangePx -
+        ANCHOR_UP_PX,
+      -ANCHOR_UP_PX,
+      ANCHOR_DOWN_PX
+    );
+
+  const localCoords = (e: React.PointerEvent) => {
+    const rect = svgRef.current!.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * TIMELINE_W,
+      y: ((e.clientY - rect.top) / rect.height) * TIMELINE_H,
+    };
+  };
+
+  const onBgPointerDown = (e: React.PointerEvent) => {
+    if (disabled) return;
+    const { x, y } = localCoords(e);
+    const t = xToT(x);
+    const offset = yToOffset(y);
+    const id = nextIdRef.current++;
+    const next = [...traj, { id, t, offset }].sort((a, b) => a.t - b.t);
+    onChange(next);
+    dragRef.current = { id, isEndpoint: false };
+    try {
+      svgRef.current!.setPointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const onPointPointerDown = (p: TrajPoint, isEndpoint: boolean) => (
+    e: React.PointerEvent
+  ) => {
+    if (disabled) return;
+    e.stopPropagation();
+    dragRef.current = { id: p.id, isEndpoint };
+    try {
+      svgRef.current!.setPointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const { x, y } = localCoords(e);
+    const next = traj
+      .map((p) => {
+        if (p.id !== drag.id) return p;
+        return {
+          ...p,
+          t: drag.isEndpoint ? p.t : xToT(x),
+          offset: yToOffset(y),
+        };
+      })
+      .sort((a, b) => a.t - b.t);
+    onChange(next);
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    try {
+      svgRef.current!.releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const onPointDoubleClick = (p: TrajPoint, isEndpoint: boolean) => (
+    e: React.MouseEvent
+  ) => {
+    if (disabled || isEndpoint) return;
+    e.stopPropagation();
+    onChange(traj.filter((pt) => pt.id !== p.id));
+  };
+
+  const polyPoints = traj
+    .map((p) => `${tToX(p.t).toFixed(2)},${offsetToY(p.offset).toFixed(2)}`)
+    .join(" ");
+
+  const homeY = TIMELINE_HOME_Y;
+  const innerLeft = TIMELINE_PAD;
+  const innerRight = TIMELINE_PAD + TIMELINE_INNER_W;
+  const innerBottom = TIMELINE_INNER_TOP + TIMELINE_INNER_H;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="font-medium text-neutral-700">
+          Anchor trajectory — x: time (0–{TRAJECTORY_DURATION_S.toFixed(1)}s of the right→left leg). y: anchor
+          offset from home.
+        </span>
+        <button
+          className="text-xs text-neutral-600 underline disabled:opacity-40"
+          onClick={() => {
+            nextIdRef.current = 3;
+            onChange(defaultTrajectory());
+          }}
+          disabled={disabled}
+        >
+          Reset shape
+        </button>
+      </div>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${TIMELINE_W} ${TIMELINE_H}`}
+        className={`w-full block bg-white border border-neutral-300 rounded-md ${
+          disabled ? "opacity-60 cursor-not-allowed" : "cursor-crosshair"
+        } touch-none select-none`}
+        style={{ aspectRatio: `${TIMELINE_W} / ${TIMELINE_H}` }}
+        onPointerDown={onBgPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <rect
+          x={innerLeft}
+          y={TIMELINE_INNER_TOP}
+          width={TIMELINE_INNER_W}
+          height={TIMELINE_INNER_H}
+          fill="#f9fafb"
+          stroke="#e5e7eb"
+        />
+        {/* Home line (dashed) */}
+        <line
+          x1={innerLeft}
+          x2={innerRight}
+          y1={homeY}
+          y2={homeY}
+          stroke="#9ca3af"
+          strokeDasharray="4 4"
+        />
+        {/* Axis labels */}
+        <text x={innerLeft + 4} y={TIMELINE_INNER_TOP + 11} fontSize="10" fill="#6b7280">
+          ↑ {ANCHOR_UP_M.toFixed(1)} m
+        </text>
+        <text x={innerLeft + 4} y={innerBottom - 3} fontSize="10" fill="#6b7280">
+          ↓ {ANCHOR_DOWN_M.toFixed(1)} m
+        </text>
+        <text x={innerRight - 38} y={homeY - 4} fontSize="10" fill="#9ca3af">
+          home
+        </text>
+        <text x={innerLeft} y={TIMELINE_H - 3} fontSize="10" fill="#6b7280">
+          0s
+        </text>
+        <text x={innerRight - 28} y={TIMELINE_H - 3} fontSize="10" fill="#6b7280">
+          {TRAJECTORY_DURATION_S.toFixed(1)}s
+        </text>
+        {/* Playhead */}
+        {playT !== null && (
+          <line
+            x1={tToX(playT)}
+            x2={tToX(playT)}
+            y1={TIMELINE_INNER_TOP}
+            y2={innerBottom}
+            stroke="#10b981"
+            strokeWidth="1.5"
+          />
+        )}
+        {/* Trajectory polyline */}
+        <polyline
+          points={polyPoints}
+          fill="none"
+          stroke="#2563eb"
+          strokeWidth="2"
+        />
+        {/* Control points */}
+        {traj.map((p, i) => {
+          const isEndpoint = i === 0 || i === traj.length - 1;
+          return (
+            <circle
+              key={p.id}
+              cx={tToX(p.t)}
+              cy={offsetToY(p.offset)}
+              r={isEndpoint ? 6 : 7}
+              fill={isEndpoint ? "#60a5fa" : "#2563eb"}
+              stroke="#1e40af"
+              strokeWidth="1.5"
+              style={{ cursor: disabled ? "not-allowed" : "grab" }}
+              onPointerDown={onPointPointerDown(p, isEndpoint)}
+              onDoubleClick={onPointDoubleClick(p, isEndpoint)}
+            />
+          );
+        })}
+      </svg>
+      <div className="text-[11px] text-neutral-500 mt-1">
+        Click inside to add a control point, drag to shape, double-click an interior point to remove it. The
+        trajectory only drives the anchor during the first half of the swing (right → left peak); after that, the
+        anchor holds at its last position.
+      </div>
+    </div>
+  );
 }
