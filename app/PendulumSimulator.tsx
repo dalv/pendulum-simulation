@@ -118,20 +118,75 @@ function defaultTrajectory(): TrajPoint[] {
   ];
 }
 
+// Monotone cubic Hermite (Fritsch-Carlson) tangents. Produces a smooth curve
+// that passes through every control point without overshooting between them.
+function monotoneCubicTangents(pts: TrajPoint[]): number[] {
+  const n = pts.length;
+  if (n === 0) return [];
+  if (n === 1) return [0];
+
+  const d: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dt = pts[i + 1].t - pts[i].t;
+    d.push(dt === 0 ? 0 : (pts[i + 1].offset - pts[i].offset) / dt);
+  }
+
+  const m: number[] = [];
+  m.push(d[0]);
+  for (let i = 1; i < n - 1; i++) {
+    if (d[i - 1] * d[i] <= 0) m.push(0);
+    else m.push((d[i - 1] + d[i]) / 2);
+  }
+  m.push(d[n - 2]);
+
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) {
+      m[i] = 0;
+      m[i + 1] = 0;
+      continue;
+    }
+    const a = m[i] / d[i];
+    const b = m[i + 1] / d[i];
+    const h = a * a + b * b;
+    if (h > 9) {
+      const s = 3 / Math.sqrt(h);
+      m[i] = s * a * d[i];
+      m[i + 1] = s * b * d[i];
+    }
+  }
+
+  return m;
+}
+
 function sampleTrajectory(points: TrajPoint[], t: number): number {
-  if (points.length === 0) return 0;
+  const n = points.length;
+  if (n === 0) return 0;
   const ct = t < 0 ? 0 : t > 1 ? 1 : t;
   if (ct <= points[0].t) return points[0].offset;
-  const last = points[points.length - 1];
+  const last = points[n - 1];
   if (ct >= last.t) return last.offset;
-  for (let i = 0; i < points.length - 1; i++) {
+  if (n === 1) return points[0].offset;
+
+  const tan = monotoneCubicTangents(points);
+  for (let i = 0; i < n - 1; i++) {
     const a = points[i];
     const b = points[i + 1];
     if (a.t <= ct && ct <= b.t) {
-      const span = b.t - a.t;
-      if (span <= 0) return b.offset;
-      const u = (ct - a.t) / span;
-      return a.offset + u * (b.offset - a.offset);
+      const h = b.t - a.t;
+      if (h <= 0) return b.offset;
+      const u = (ct - a.t) / h;
+      const u2 = u * u;
+      const u3 = u2 * u;
+      const h00 = 2 * u3 - 3 * u2 + 1;
+      const h10 = u3 - 2 * u2 + u;
+      const h01 = -2 * u3 + 3 * u2;
+      const h11 = u3 - u2;
+      return (
+        h00 * a.offset +
+        h10 * h * tan[i] +
+        h01 * b.offset +
+        h11 * h * tan[i + 1]
+      );
     }
   }
   return last.offset;
@@ -765,9 +820,24 @@ function AnchorTimeline({
     onChange(traj.filter((pt) => pt.id !== p.id));
   };
 
-  const polyPoints = traj
-    .map((p) => `${tToX(p.t).toFixed(2)},${offsetToY(p.offset).toFixed(2)}`)
-    .join(" ");
+  // Trace the smoothed curve by sampling sampleTrajectory — keeps the rendered
+  // line identical to what actually drives the anchor at playback.
+  const SMOOTH_SAMPLES = 160;
+  const t0 = traj[0]?.t ?? 0;
+  const t1 = traj[traj.length - 1]?.t ?? 1;
+  const polyPoints =
+    traj.length < 2
+      ? traj
+          .map(
+            (p) => `${tToX(p.t).toFixed(2)},${offsetToY(p.offset).toFixed(2)}`
+          )
+          .join(" ")
+      : Array.from({ length: SMOOTH_SAMPLES + 1 }, (_, i) => {
+          const tt = t0 + (i / SMOOTH_SAMPLES) * (t1 - t0);
+          return `${tToX(tt).toFixed(2)},${offsetToY(
+            sampleTrajectory(traj, tt)
+          ).toFixed(2)}`;
+        }).join(" ");
 
   const homeY = TIMELINE_HOME_Y;
   const innerLeft = TIMELINE_PAD;
