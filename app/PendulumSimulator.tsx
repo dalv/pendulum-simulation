@@ -41,9 +41,8 @@ interface SimState {
   pointerOffsetY: number;
   movedLeft: boolean;
   movedRight: boolean;
-  leftmostX: number;
-  leftmostPos: Vec2 | null;
-  leftPeakCommitted: boolean;
+  hasBeenLeft: boolean;
+  leftTopPos: Vec2 | null;
   leftPeakHeightM: number | null;
 }
 
@@ -63,9 +62,8 @@ function makeInitialSim(): SimState {
     pointerOffsetY: 0,
     movedLeft: false,
     movedRight: false,
-    leftmostX: Infinity,
-    leftmostPos: null,
-    leftPeakCommitted: false,
+    hasBeenLeft: false,
+    leftTopPos: null,
     leftPeakHeightM: null,
   };
 }
@@ -209,27 +207,24 @@ export default function PendulumSimulator() {
       s.currentHeightM = heightPx / PX_PER_METER;
       if (s.currentHeightM > s.maxHeightM) s.maxHeightM = s.currentHeightM;
 
-      // Leftmost-x tracking (for peak marker)
-      if (s.weight.x < s.leftmostX) {
-        s.leftmostX = s.weight.x;
-        s.leftmostPos = { x: s.weight.x, y: s.weight.y };
+      // Left-side peak = highest point (min y) reached while the weight is on
+      // the left of the anchor. This is what "max height on the left" means
+      // and it's what the user wants marked; tracking leftmost-x alone misses
+      // peaks created by pumping the anchor upward.
+      if (s.weight.x < s.anchor.x) {
+        s.hasBeenLeft = true;
+        if (s.leftTopPos === null || s.weight.y < s.leftTopPos.y) {
+          s.leftTopPos = { x: s.weight.x, y: s.weight.y };
+          s.leftPeakHeightM = (s.referenceY - s.weight.y) / PX_PER_METER;
+        }
       }
 
-      // Phase detection via x-velocity
+      // Phase detection via x-velocity: one full right→left→right cycle.
       const vx = s.weightVel.x;
-      if (!s.leftPeakCommitted) {
-        if (vx < -VX_THRESHOLD) s.movedLeft = true;
-        if (s.movedLeft && vx > 0) {
-          s.leftPeakCommitted = true;
-          if (s.leftmostPos) {
-            s.leftPeakHeightM = (s.referenceY - s.leftmostPos.y) / PX_PER_METER;
-          }
-        }
-      } else {
-        if (vx > VX_THRESHOLD) s.movedRight = true;
-        if (s.movedRight && vx <= 0) {
-          s.phase = "done";
-        }
+      if (vx < -VX_THRESHOLD) s.movedLeft = true;
+      if (s.movedLeft && vx > VX_THRESHOLD) s.movedRight = true;
+      if (s.movedRight && vx <= 0) {
+        s.phase = "done";
       }
 
       // Record path
@@ -304,19 +299,19 @@ export default function PendulumSimulator() {
     ctx.stroke();
 
     // Left-peak marker (rendered before anchor/weight so they sit on top when close)
-    if (s.leftPeakCommitted && s.leftmostPos) {
+    if (s.leftTopPos && s.leftPeakHeightM !== null) {
       ctx.fillStyle = "#10b981";
       ctx.strokeStyle = "#047857";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(s.leftmostPos.x, s.leftmostPos.y, 7, 0, Math.PI * 2);
+      ctx.arc(s.leftTopPos.x, s.leftTopPos.y, 7, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
-      const label = `${(s.leftPeakHeightM ?? 0).toFixed(2)} m`;
+      const label = `${s.leftPeakHeightM.toFixed(2)} m`;
       ctx.font = "600 13px ui-sans-serif, system-ui, sans-serif";
-      const tx = s.leftmostPos.x;
-      const ty = s.leftmostPos.y - 14;
+      const tx = s.leftTopPos.x;
+      const ty = s.leftTopPos.y - 14;
       const metrics = ctx.measureText(label);
       ctx.fillStyle = "rgba(255,255,255,0.92)";
       ctx.fillRect(tx - metrics.width / 2 - 4, ty - 14, metrics.width + 8, 18);
