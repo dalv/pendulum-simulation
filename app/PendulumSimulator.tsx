@@ -118,6 +118,41 @@ function defaultTrajectory(): TrajPoint[] {
   ];
 }
 
+// Preset shapes. Each preset's "-0.3" in the user spec = 0.3 m below home,
+// which maps to +0.3 * PX_PER_METER in our internal offset (positive = down).
+const PRESET_DROP_PX = 0.3 * PX_PER_METER;
+
+const TRAJECTORY_PRESETS: Array<{
+  label: string;
+  build: () => TrajPoint[];
+}> = [
+  {
+    label: "Down & wait",
+    build: () => [
+      { id: 1, t: 0, offset: 0 },
+      { id: 2, t: 0.5, offset: PRESET_DROP_PX },
+      { id: 3, t: 1, offset: PRESET_DROP_PX },
+    ],
+  },
+  {
+    label: "Linear pump",
+    build: () => [
+      { id: 1, t: 0, offset: 0 },
+      { id: 2, t: 0.5, offset: PRESET_DROP_PX },
+      { id: 3, t: 1, offset: 0 },
+    ],
+  },
+  {
+    label: "Early start",
+    build: () => [
+      { id: 1, t: 0, offset: 0 },
+      { id: 2, t: 0.3, offset: PRESET_DROP_PX },
+      { id: 3, t: 0.6, offset: 0 },
+      { id: 4, t: 1, offset: 0 },
+    ],
+  },
+];
+
 // Monotone cubic Hermite (Fritsch-Carlson) tangents. Produces a smooth curve
 // that passes through every control point without overshooting between them.
 function monotoneCubicTangents(pts: TrajPoint[]): number[] {
@@ -861,6 +896,23 @@ function AnchorTimeline({
         >
           Reset shape
         </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs mb-2">
+        <span className="text-neutral-500">Presets:</span>
+        {TRAJECTORY_PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            className="px-2 py-0.5 rounded border border-neutral-300 bg-white hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white"
+            onClick={() => {
+              const pts = preset.build();
+              nextIdRef.current = Math.max(0, ...pts.map((p) => p.id)) + 1;
+              onChange(pts);
+            }}
+            disabled={disabled}
+          >
+            {preset.label}
+          </button>
+        ))}
       </div>
       <svg
         ref={svgRef}
