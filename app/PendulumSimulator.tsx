@@ -145,6 +145,15 @@ const TRAJECTORY_PRESETS: Array<{
       { id: 4, t: 1, offset: 0 },
     ],
   },
+  {
+    label: "Late start",
+    build: () => [
+      { id: 1, t: 0, offset: 0 },
+      { id: 2, t: 0.4, offset: PRESET_DROP_PX },
+      { id: 3, t: 0.75, offset: 0 },
+      { id: 4, t: 1, offset: 0 },
+    ],
+  },
 ];
 
 // Monotone cubic Hermite (Fritsch-Carlson) tangents. Produces a smooth curve
