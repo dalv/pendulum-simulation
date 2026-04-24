@@ -140,8 +140,8 @@ const TRAJECTORY_PRESETS: Array<{
     label: "Early start",
     build: () => [
       { id: 1, t: 0, offset: 0 },
-      { id: 2, t: 0.3, offset: PRESET_DROP_PX },
-      { id: 3, t: 0.6, offset: 0 },
+      { id: 2, t: 0.25, offset: PRESET_DROP_PX },
+      { id: 3, t: 0.5, offset: 0 },
       { id: 4, t: 1, offset: 0 },
     ],
   },
@@ -150,7 +150,7 @@ const TRAJECTORY_PRESETS: Array<{
     build: () => [
       { id: 1, t: 0, offset: 0 },
       { id: 2, t: 0.4, offset: PRESET_DROP_PX },
-      { id: 3, t: 0.75, offset: 0 },
+      { id: 3, t: 0.7, offset: 0 },
       { id: 4, t: 1, offset: 0 },
     ],
   },
