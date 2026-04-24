@@ -17,7 +17,6 @@ const ANCHOR_INIT_Y = BAR_TOP + 0.25 * (BAR_BOTTOM - BAR_TOP);
 const ANCHOR_RADIUS = 12;
 const WEIGHT_RADIUS = 16;
 const MAX_ANCHOR_SPEED = 1800;
-const VX_THRESHOLD = 80;
 const DAMPING_PER_STEP = 0.9998;
 const COUNTDOWN_DURATION_S = 3;
 const CHARGE_HEIGHT_M = 0.3;
@@ -43,9 +42,9 @@ interface SimState {
   frameCount: number;
   dragging: boolean;
   pointerOffsetY: number;
-  movedLeft: boolean;
-  movedRight: boolean;
   hasBeenLeft: boolean;
+  hasReturnedRight: boolean;
+  rightmostXAfterReturn: number;
   leftTopPos: Vec2 | null;
   leftPeakHeightM: number | null;
   countdownElapsedS: number;
@@ -65,9 +64,9 @@ function makeInitialSim(): SimState {
     frameCount: 0,
     dragging: false,
     pointerOffsetY: 0,
-    movedLeft: false,
-    movedRight: false,
     hasBeenLeft: false,
+    hasReturnedRight: false,
+    rightmostXAfterReturn: -Infinity,
     leftTopPos: null,
     leftPeakHeightM: null,
     countdownElapsedS: 0,
@@ -249,12 +248,22 @@ export default function PendulumSimulator() {
         }
       }
 
-      // Phase detection via x-velocity: one full right→left→right cycle.
-      const vx = s.weightVel.x;
-      if (vx < -VX_THRESHOLD) s.movedLeft = true;
-      if (s.movedLeft && vx > VX_THRESHOLD) s.movedRight = true;
-      if (s.movedRight && vx <= 0) {
-        s.phase = "done";
+      // Phase detection: one full right→left→right cycle, position-based.
+      // A velocity-sign criterion breaks when pumping sends the weight high
+      // enough on the left that its horizontal velocity flips positive while
+      // still rising — we'd then hit "vx <= 0" at the peak and stop the
+      // simulation on the upper-left. Using position instead works even if
+      // the swing loops all the way over the top of the anchor.
+      if (s.hasBeenLeft && s.weight.x > s.anchor.x) {
+        s.hasReturnedRight = true;
+      }
+      if (s.hasReturnedRight) {
+        if (s.weight.x > s.rightmostXAfterReturn) {
+          s.rightmostXAfterReturn = s.weight.x;
+        } else if (s.weight.x < s.rightmostXAfterReturn - 3) {
+          // x has started decreasing after reaching a right-side max → done.
+          s.phase = "done";
+        }
       }
 
       // Record path
