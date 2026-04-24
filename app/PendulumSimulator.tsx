@@ -70,8 +70,6 @@ interface SimState {
   maxHeightM: number;
   path: Vec2[];
   frameCount: number;
-  dragging: boolean;
-  pointerOffsetY: number;
   hasBeenLeft: boolean;
   hasReturnedRight: boolean;
   rightmostXAfterReturn: number;
@@ -81,7 +79,6 @@ interface SimState {
   swingElapsedS: number;
   minWeightX: number;
   reachedLeftPeak: boolean;
-  userTookOverAnchor: boolean;
 }
 
 function makeInitialSim(): SimState {
@@ -96,8 +93,6 @@ function makeInitialSim(): SimState {
     maxHeightM: 0,
     path: [],
     frameCount: 0,
-    dragging: false,
-    pointerOffsetY: 0,
     hasBeenLeft: false,
     hasReturnedRight: false,
     rightmostXAfterReturn: -Infinity,
@@ -107,7 +102,6 @@ function makeInitialSim(): SimState {
     swingElapsedS: 0,
     minWeightX: Infinity,
     reachedLeftPeak: false,
-    userTookOverAnchor: false,
   };
 }
 
@@ -316,13 +310,12 @@ export default function PendulumSimulator() {
           setPlayheadT(null);
         } else if (
           s.phase === "swinging" &&
-          !s.userTookOverAnchor &&
           !s.reachedLeftPeak
         ) {
           setPlayheadT(Math.min(s.swingElapsedS / TRAJECTORY_DURATION_S, 1));
         }
-        // Past-peak, user-takeover, and "done" phases leave the playhead
-        // where it was — the UI holds its last position.
+        // Past-peak and "done" phases leave the playhead where it was —
+        // the UI holds its last position.
         if (s.phase !== lastSyncedPhase) {
           if (s.phase === "done" && lastSyncedPhase === "swinging") {
             setPhase("done");
@@ -380,11 +373,10 @@ export default function PendulumSimulator() {
       s.referenceY = s.anchor.y;
     } else if (s.phase === "swinging") {
       // Drive anchor from the pre-defined trajectory while we're on the
-      // right→left leg of the swing. Once the weight passes the left peak, or
-      // the user manually grabs the anchor, trajectory playback stops — the
-      // anchor just holds at wherever it was last driven to.
+      // right→left leg of the swing. Once the weight passes the left peak,
+      // trajectory playback stops — the anchor holds at its last target.
       s.swingElapsedS += dt;
-      if (!s.userTookOverAnchor && !s.reachedLeftPeak) {
+      if (!s.reachedLeftPeak) {
         const tNorm = Math.min(s.swingElapsedS / TRAJECTORY_DURATION_S, 1);
         const offset = sampleTrajectory(trajectoryRef.current, tNorm);
         s.anchorTargetY = clamp(
@@ -570,11 +562,6 @@ export default function PendulumSimulator() {
     ctx.beginPath();
     ctx.arc(s.anchor.x, s.anchor.y, ANCHOR_RADIUS, 0, Math.PI * 2);
     ctx.fill();
-    if (s.dragging) {
-      ctx.strokeStyle = "#60a5fa";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
 
     // Weight (red)
     ctx.fillStyle = "#ef4444";
@@ -608,51 +595,6 @@ export default function PendulumSimulator() {
     canvas.height = CANVAS_HEIGHT * dpr;
   }, []);
 
-  const localCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current!;
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: ((e.clientX - rect.left) / rect.width) * CANVAS_WIDTH,
-      y: ((e.clientY - rect.top) / rect.height) * CANVAS_HEIGHT,
-    };
-  };
-
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const { x, y } = localCoords(e);
-    const s = simRef.current;
-    const onAnchor = Math.hypot(x - s.anchor.x, y - s.anchor.y) < ANCHOR_RADIUS * 2.5;
-    // Only the dark-blue (active) segment of the bar accepts click-to-jump;
-    // clicking the light-blue extensions does nothing since the anchor is
-    // clamped to that range anyway.
-    const onBar =
-      Math.abs(x - BAR_X) < 18 && y >= ACTIVE_BAR_TOP && y <= ACTIVE_BAR_BOTTOM;
-    if (onAnchor || onBar) {
-      s.dragging = true;
-      s.pointerOffsetY = onAnchor ? s.anchor.y - y : 0;
-      if (!onAnchor && onBar) {
-        s.anchorTargetY = clamp(y, ANCHOR_MIN_Y, ANCHOR_MAX_Y);
-      }
-      // Any grab during the swing disables trajectory playback for this run.
-      if (s.phase === "swinging") s.userTookOverAnchor = true;
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const s = simRef.current;
-    if (!s.dragging) return;
-    const { y } = localCoords(e);
-    s.anchorTargetY = clamp(y + s.pointerOffsetY, ANCHOR_MIN_Y, ANCHOR_MAX_Y);
-  }, []);
-
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const s = simRef.current;
-    s.dragging = false;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {}
-  }, []);
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -672,7 +614,7 @@ export default function PendulumSimulator() {
           <span className="text-4xl font-bold tabular-nums text-neutral-800 ml-2">{countdown}</span>
         )}
         <span className="ml-auto text-xs text-neutral-500">
-          Tip: shape the anchor&apos;s path on the timeline below, or drag the anchor during the swing.
+          Tip: shape the anchor&apos;s path on the timeline below before pressing Go.
         </span>
       </div>
 
@@ -697,14 +639,7 @@ export default function PendulumSimulator() {
         className="relative border border-neutral-300 rounded-lg overflow-hidden bg-white touch-none select-none"
         style={{ aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}` }}
       >
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full block cursor-grab active:cursor-grabbing"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-        />
+        <canvas ref={canvasRef} className="w-full h-full block" />
       </div>
 
       {pastRuns.length > 0 && (

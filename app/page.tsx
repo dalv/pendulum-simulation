@@ -7,8 +7,8 @@ export default function Home() {
         <header className="mb-4">
           <h1 className="text-2xl font-semibold">Pendulum Simulator</h1>
           <p className="text-sm text-neutral-600 mt-1">
-            Press <span className="font-medium">Go</span> to drop the weight after a 3-2-1 countdown. Drag the black
-            anchor up and down along the blue bar while the pendulum swings to change its path.
+            Press <span className="font-medium">Go</span> to drop the weight after a 3-2-1 countdown. Shape the
+            anchor&apos;s motion on the timeline below to change how the pendulum swings.
           </p>
         </header>
         <PendulumSimulator />
