@@ -17,9 +17,12 @@ const ANCHOR_DOWN_PX = ANCHOR_DOWN_M * PX_PER_METER;
 const ANCHOR_HOME_Y = 200;
 const ANCHOR_MIN_Y = ANCHOR_HOME_Y - ANCHOR_UP_PX;
 const ANCHOR_MAX_Y = ANCHOR_HOME_Y + ANCHOR_DOWN_PX;
-// Blue bar is sized to the anchor's movable window (plus a small visual margin).
-const BAR_TOP = ANCHOR_MIN_Y - 14;
-const BAR_BOTTOM = ANCHOR_MAX_Y + 14;
+// Bar spans most of the canvas as a visual fixture; the dark-blue segment
+// inside marks the anchor's actual movable range.
+const BAR_TOP = 60;
+const BAR_BOTTOM = CANVAS_HEIGHT - 60;
+const ACTIVE_BAR_TOP = ANCHOR_MIN_Y;
+const ACTIVE_BAR_BOTTOM = ANCHOR_MAX_Y;
 const ANCHOR_INIT_Y = ANCHOR_HOME_Y;
 
 const ANCHOR_RADIUS = 12;
@@ -408,22 +411,22 @@ export default function PendulumSimulator() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Blue vertical bar (sized to the anchor's movable window)
-    ctx.strokeStyle = "#2563eb";
+    // Vertical bar — light blue outside the anchor's movable window, dark
+    // blue inside it so the active range is visually obvious.
     ctx.lineWidth = 10;
     ctx.lineCap = "round";
+    ctx.strokeStyle = "#bfdbfe";
     ctx.beginPath();
     ctx.moveTo(BAR_X, BAR_TOP);
+    ctx.lineTo(BAR_X, ACTIVE_BAR_TOP);
+    ctx.moveTo(BAR_X, ACTIVE_BAR_BOTTOM);
     ctx.lineTo(BAR_X, BAR_BOTTOM);
     ctx.stroke();
-    // Thin tick marks on either side of the bar at the exact movable limits.
-    ctx.strokeStyle = "#93c5fd";
-    ctx.lineWidth = 1;
+    ctx.lineCap = "butt";
+    ctx.strokeStyle = "#2563eb";
     ctx.beginPath();
-    ctx.moveTo(BAR_X - 14, ANCHOR_MIN_Y);
-    ctx.lineTo(BAR_X + 14, ANCHOR_MIN_Y);
-    ctx.moveTo(BAR_X - 14, ANCHOR_MAX_Y);
-    ctx.lineTo(BAR_X + 14, ANCHOR_MAX_Y);
+    ctx.moveTo(BAR_X, ACTIVE_BAR_TOP);
+    ctx.lineTo(BAR_X, ACTIVE_BAR_BOTTOM);
     ctx.stroke();
 
     // Recorded path
@@ -528,7 +531,11 @@ export default function PendulumSimulator() {
     const { x, y } = localCoords(e);
     const s = simRef.current;
     const onAnchor = Math.hypot(x - s.anchor.x, y - s.anchor.y) < ANCHOR_RADIUS * 2.5;
-    const onBar = Math.abs(x - BAR_X) < 18 && y >= BAR_TOP && y <= BAR_BOTTOM;
+    // Only the dark-blue (active) segment of the bar accepts click-to-jump;
+    // clicking the light-blue extensions does nothing since the anchor is
+    // clamped to that range anyway.
+    const onBar =
+      Math.abs(x - BAR_X) < 18 && y >= ACTIVE_BAR_TOP && y <= ACTIVE_BAR_BOTTOM;
     if (onAnchor || onBar) {
       s.dragging = true;
       s.pointerOffsetY = onAnchor ? s.anchor.y - y : 0;
