@@ -605,8 +605,8 @@ export default function PendulumSimulator() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-col gap-2 sm:gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         <button
           onClick={go}
           className="px-4 py-2 rounded-md bg-black text-white text-sm font-medium hover:bg-neutral-800 transition-colors"
@@ -615,26 +615,47 @@ export default function PendulumSimulator() {
         </button>
         <button
           onClick={reset}
-          className="px-4 py-2 rounded-md bg-neutral-200 text-black text-sm font-medium hover:bg-neutral-300 transition-colors"
+          className="px-3 py-2 rounded-md bg-neutral-200 text-black text-sm font-medium hover:bg-neutral-300 transition-colors"
         >
           Reset
         </button>
         {countdown > 0 && (
-          <span className="text-4xl font-bold tabular-nums text-neutral-800 ml-2">{countdown}</span>
+          <span className="text-3xl sm:text-4xl font-bold tabular-nums text-neutral-800">
+            {countdown}
+          </span>
         )}
-        <span className="ml-auto text-xs text-neutral-500">
-          Tip: shape the anchor&apos;s path on the timeline below before pressing Go.
+        <span className="ml-auto text-xs text-neutral-600 font-medium">
+          {prettyPhase(phase)}
         </span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Current height" value={`${currentHeight.toFixed(2)} m`} />
-        <Stat label="Max height" value={`${maxHeight.toFixed(2)} m`} />
-        <Stat
-          label="Left-peak height"
-          value={leftPeakHeight === null ? "—" : `${leftPeakHeight.toFixed(2)} m`}
-        />
-        <Stat label="Status" value={prettyPhase(phase)} />
+      {/* Compact stats strip — 3 columns on phones, 1 row on wider screens */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm bg-white border border-neutral-200 rounded-md px-3 py-2">
+        <div className="flex items-baseline gap-1">
+          <span className="text-xs text-neutral-500">Now</span>
+          <span className="font-semibold tabular-nums">
+            {currentHeight.toFixed(2)} m
+          </span>
+        </div>
+        <div className="flex items-baseline gap-1">
+          <span className="text-xs text-neutral-500">Max</span>
+          <span className="font-semibold tabular-nums">
+            {maxHeight.toFixed(2)} m
+          </span>
+        </div>
+        <div className="flex items-baseline gap-1">
+          <span className="text-xs text-neutral-500">Left peak</span>
+          <span className="font-semibold tabular-nums">
+            {leftPeakHeight === null ? "—" : `${leftPeakHeight.toFixed(2)} m`}
+          </span>
+        </div>
+      </div>
+
+      <div
+        className="relative border border-neutral-300 rounded-lg overflow-hidden bg-white touch-none select-none"
+        style={{ aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}` }}
+      >
+        <canvas ref={canvasRef} className="w-full h-full block" />
       </div>
 
       <AnchorTimeline
@@ -644,39 +665,19 @@ export default function PendulumSimulator() {
         disabled={phase === "swinging" || phase === "countdown"}
       />
 
-      <div
-        className="relative border border-neutral-300 rounded-lg overflow-hidden bg-white touch-none select-none"
-        style={{ aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}` }}
-      >
-        <canvas ref={canvasRef} className="w-full h-full block" />
-      </div>
-
       {pastRuns.length > 0 && (
         <div className="text-sm bg-white border border-neutral-200 rounded-md px-3 py-2">
           <div className="font-medium mb-1">Past runs — left-peak height</div>
           <ul className="list-disc pl-5 space-y-0.5 text-neutral-700">
             {pastRuns.map((h, i) => (
               <li key={i}>
-                Run {i + 1}: <span className="tabular-nums">{h.toFixed(2)} m</span>
+                Run {i + 1}:{" "}
+                <span className="tabular-nums">{h.toFixed(2)} m</span>
               </li>
             ))}
           </ul>
         </div>
       )}
-
-      <div className="text-xs text-neutral-500">
-        Reference (dashed line) = the weight&apos;s height at the moment of release. Heights above that line are
-        positive; below are negative.
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-white border border-neutral-200 rounded-md px-3 py-2">
-      <div className="text-xs text-neutral-500">{label}</div>
-      <div className="text-base font-semibold tabular-nums">{value}</div>
     </div>
   );
 }
@@ -825,24 +826,8 @@ function AnchorTimeline({
 
   return (
     <div>
-      <div className="flex items-center justify-between text-xs mb-1">
-        <span className="font-medium text-neutral-700">
-          Anchor trajectory — x: time (0–{TRAJECTORY_DURATION_S.toFixed(1)}s of the right→left leg). y: anchor
-          offset from home.
-        </span>
-        <button
-          className="text-xs text-neutral-600 underline disabled:opacity-40"
-          onClick={() => {
-            nextIdRef.current = 3;
-            onChange(defaultTrajectory());
-          }}
-          disabled={disabled}
-        >
-          Reset shape
-        </button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs mb-2">
-        <span className="text-neutral-500">Presets:</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs mb-1">
+        <span className="font-medium text-neutral-700">Anchor trajectory</span>
         {TRAJECTORY_PRESETS.map((preset) => (
           <button
             key={preset.label}
@@ -857,6 +842,16 @@ function AnchorTimeline({
             {preset.label}
           </button>
         ))}
+        <button
+          className="ml-auto text-neutral-600 underline disabled:opacity-40"
+          onClick={() => {
+            nextIdRef.current = 3;
+            onChange(defaultTrajectory());
+          }}
+          disabled={disabled}
+        >
+          Reset shape
+        </button>
       </div>
       <svg
         ref={svgRef}
@@ -941,9 +936,7 @@ function AnchorTimeline({
         })}
       </svg>
       <div className="text-[11px] text-neutral-500 mt-1">
-        Click inside to add a control point, drag to shape, double-click an interior point to remove it. The
-        trajectory only drives the anchor during the first half of the swing (right → left peak); after that, the
-        anchor holds at its last position.
+        Click to add a point, drag to shape, double-click to remove. Drives the anchor only on the right→left leg.
       </div>
     </div>
   );
