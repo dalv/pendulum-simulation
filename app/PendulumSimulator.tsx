@@ -955,7 +955,26 @@ function AnchorTimeline({
           );
         })}
       </svg>
-      <div className="text-[11px] text-neutral-500 mt-1">
+      <div className="text-[11px] text-neutral-700 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 tabular-nums">
+        <span className="text-neutral-500">
+          {traj.length} point{traj.length === 1 ? "" : "s"}:
+        </span>
+        {traj.map((p, i) => {
+          const timeS = p.t * TRAJECTORY_DURATION_S;
+          // Internal offset is +px = anchor down. The user's notation (matching
+          // the preset spec) is "+ = anchor up, − = anchor down", so flip sign.
+          const heightM = -p.offset / PX_PER_METER;
+          const heightStr =
+            heightM > 0 ? `+${heightM.toFixed(2)}` : heightM.toFixed(2);
+          return (
+            <span key={p.id} className="whitespace-nowrap">
+              <span className="text-neutral-400">{i + 1}.</span>{" "}
+              {timeS.toFixed(2)}s, {heightStr}m
+            </span>
+          );
+        })}
+      </div>
+      <div className="text-[11px] text-neutral-500 mt-0.5">
         Click to add a point, drag to shape, double-click to remove. Drives the anchor only on the right→left leg.
       </div>
     </div>
