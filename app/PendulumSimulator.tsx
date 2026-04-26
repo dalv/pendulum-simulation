@@ -619,7 +619,7 @@ export default function PendulumSimulator() {
     // canvas → trajectory → past runs).
     // Desktop (md+): 2-column grid — canvas takes the left column, stats
     // sit above the trajectory on the right, past runs span both columns.
-    <div className="grid gap-2 sm:gap-3 md:gap-4 md:grid-cols-[minmax(0,1fr)_320px] md:grid-rows-[auto_auto_1fr_auto]">
+    <div className="grid gap-2 sm:gap-3 md:gap-4 md:grid-cols-[minmax(0,1fr)_360px] md:grid-rows-[auto_auto_1fr_auto]">
       {/* Buttons + status — full width on every breakpoint */}
       <div className="md:col-span-2 flex items-center gap-2 sm:gap-3">
         <button
