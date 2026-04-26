@@ -142,8 +142,8 @@ const TRAJECTORY_PRESETS: Array<{
     label: "Early start",
     build: () => [
       { id: 1, t: 0, offset: 0 },
-      { id: 2, t: 0.25, offset: PRESET_DROP_PX },
-      { id: 3, t: 0.4, offset: 0 },
+      { id: 2, t: 0.3, offset: PRESET_DROP_PX },
+      { id: 3, t: 0.45, offset: 0 },
       { id: 4, t: 1, offset: 0 },
     ],
   },
@@ -151,8 +151,8 @@ const TRAJECTORY_PRESETS: Array<{
     label: "Late start",
     build: () => [
       { id: 1, t: 0, offset: 0 },
-      { id: 2, t: 0.35, offset: PRESET_DROP_PX },
-      { id: 3, t: 0.5, offset: 0 },
+      { id: 2, t: 0.4, offset: PRESET_DROP_PX },
+      { id: 3, t: 0.55, offset: 0 },
       { id: 4, t: 1, offset: 0 },
     ],
   },
