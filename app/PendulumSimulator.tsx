@@ -36,7 +36,9 @@ const CHARGE_PX = CHARGE_HEIGHT_M * PX_PER_METER;
 // Anchor-trajectory timeline.
 const TRAJECTORY_DURATION_S = 2.0;
 const TIMELINE_W = 800;
-const TIMELINE_H = 110;
+// Taller viewBox = taller widget at the same width, giving mobile users
+// more vertical room to drag control points precisely.
+const TIMELINE_H = 180;
 const TIMELINE_PAD = 14;
 const TIMELINE_BOTTOM_LABEL_H = 14;
 const TIMELINE_INNER_W = TIMELINE_W - 2 * TIMELINE_PAD;
@@ -140,7 +142,7 @@ const TRAJECTORY_PRESETS: Array<{
     label: "Early start",
     build: () => [
       { id: 1, t: 0, offset: 0 },
-      { id: 2, t: 0.3, offset: PRESET_DROP_PX },
+      { id: 2, t: 0.35, offset: PRESET_DROP_PX },
       { id: 3, t: 0.5, offset: 0 },
       { id: 4, t: 1, offset: 0 },
     ],
@@ -149,7 +151,7 @@ const TRAJECTORY_PRESETS: Array<{
     label: "Late start",
     build: () => [
       { id: 1, t: 0, offset: 0 },
-      { id: 2, t: 0.4, offset: PRESET_DROP_PX },
+      { id: 2, t: 0.45, offset: PRESET_DROP_PX },
       { id: 3, t: 0.6, offset: 0 },
       { id: 4, t: 1, offset: 0 },
     ],
@@ -485,7 +487,24 @@ export default function PendulumSimulator() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Keep the internal pixel buffer in sync with the current displayed size
+    // and devicePixelRatio. Without this, resizing the viewport (or moving
+    // the window between displays of different DPR) leaves stale pixels
+    // visible because the buffer was last sized at a different scale.
+    const rect = canvas.getBoundingClientRect();
+    const desiredW = Math.max(1, Math.round(rect.width * dpr));
+    const desiredH = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== desiredW || canvas.height !== desiredH) {
+      canvas.width = desiredW;
+      canvas.height = desiredH;
+    }
+
+    // Clear the full raw buffer first, then set up a logical-coord transform.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const scale = (rect.width * dpr) / CANVAS_WIDTH;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
     const s = simRef.current;
 
@@ -595,18 +614,14 @@ export default function PendulumSimulator() {
     }
   }
 
-  // Canvas sizing with DPR
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = CANVAS_WIDTH * dpr;
-    canvas.height = CANVAS_HEIGHT * dpr;
-  }, []);
-
   return (
-    <div className="flex flex-col gap-2 sm:gap-3">
-      <div className="flex items-center gap-2 sm:gap-3">
+    // Mobile: simple vertical stack (current order: buttons → stats →
+    // canvas → trajectory → past runs).
+    // Desktop (md+): 2-column grid — canvas takes the left column, stats
+    // sit above the trajectory on the right, past runs span both columns.
+    <div className="grid gap-2 sm:gap-3 md:gap-4 md:grid-cols-[minmax(0,1fr)_320px] md:grid-rows-[auto_auto_1fr_auto]">
+      {/* Buttons + status — full width on every breakpoint */}
+      <div className="md:col-span-2 flex items-center gap-2 sm:gap-3">
         <button
           onClick={go}
           className="px-4 py-2 rounded-md bg-black text-white text-sm font-medium hover:bg-neutral-800 transition-colors"
@@ -629,8 +644,9 @@ export default function PendulumSimulator() {
         </span>
       </div>
 
-      {/* Compact stats strip — 3 columns on phones, 1 row on wider screens */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm bg-white border border-neutral-200 rounded-md px-3 py-2">
+      {/* Stats — DOM-order above the canvas on mobile; on desktop they
+          jump into the right column above the trajectory editor. */}
+      <div className="md:col-start-2 md:row-start-2 flex flex-wrap gap-x-4 gap-y-1 text-sm bg-white border border-neutral-200 rounded-md px-3 py-2">
         <div className="flex items-baseline gap-1">
           <span className="text-xs text-neutral-500">Now</span>
           <span className="font-semibold tabular-nums">
@@ -651,22 +667,26 @@ export default function PendulumSimulator() {
         </div>
       </div>
 
+      {/* Canvas — left column on desktop, spans the stats + trajectory rows */}
       <div
-        className="relative border border-neutral-300 rounded-lg overflow-hidden bg-white touch-none select-none"
+        className="md:col-start-1 md:row-start-2 md:row-span-2 relative border border-neutral-300 rounded-lg overflow-hidden bg-white touch-none select-none"
         style={{ aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}` }}
       >
         <canvas ref={canvasRef} className="w-full h-full block" />
       </div>
 
-      <AnchorTimeline
-        traj={trajectory}
-        onChange={setTrajectory}
-        playT={playheadT}
-        disabled={phase === "swinging" || phase === "countdown"}
-      />
+      {/* Trajectory editor — right column on desktop */}
+      <div className="md:col-start-2 md:row-start-3">
+        <AnchorTimeline
+          traj={trajectory}
+          onChange={setTrajectory}
+          playT={playheadT}
+          disabled={phase === "swinging" || phase === "countdown"}
+        />
+      </div>
 
       {pastRuns.length > 0 && (
-        <div className="text-sm bg-white border border-neutral-200 rounded-md px-3 py-2">
+        <div className="md:col-span-2 md:row-start-4 text-sm bg-white border border-neutral-200 rounded-md px-3 py-2">
           <div className="font-medium mb-1">Past runs — left-peak height</div>
           <ul className="list-disc pl-5 space-y-0.5 text-neutral-700">
             {pastRuns.map((h, i) => (
