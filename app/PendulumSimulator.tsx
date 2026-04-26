@@ -958,7 +958,7 @@ function AnchorTimeline({
       <div className="text-[11px] text-neutral-500 mt-0.5">
         Click to add a point, drag to shape, double-click to remove. Drives the anchor only on the right→left leg.
       </div>
-      <div className="text-[11px] text-neutral-700 mt-1 flex flex-col items-center gap-x-2 gap-y-0.5 tabular-nums">
+      <div className="text-[11px] text-neutral-700 mt-1 flex flex-col items-start gap-x-2 gap-y-0.5 tabular-nums">
         <span className="text-neutral-500">
           {traj.length} point{traj.length === 1 ? "" : "s"}:
         </span>
